@@ -1,0 +1,96 @@
+name: Build Qingjian Android APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract Qingjian source
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p extracted
+
+          unzip -q qingjian-android-source.zip -d extracted
+
+          ROOT=$(find extracted -mindepth 1 -maxdepth 1 -type d | head -n 1)
+
+          if [ -z "$ROOT" ]; then
+            echo "Cannot find extracted Qingjian directory"
+            exit 1
+          fi
+
+          cp -a "$ROOT"/. .
+
+          echo "Qingjian source extracted from: $ROOT"
+
+      - name: Add Android crate to Cargo workspace
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("Cargo.toml")
+          s = p.read_text()
+
+          if '"apps/android/rust"' not in s:
+              s = s.replace(
+                  '"apps/windows/settings",',
+                  '"apps/windows/settings", "apps/android/rust",'
+              )
+
+          p.write_text(s)
+
+          print("Cargo workspace updated")
+          PY
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK and NDK
+        shell: bash
+        run: |
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-35"
+          sdkmanager "build-tools;35.0.0"
+          sdkmanager "ndk;27.2.12479018"
+
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: aarch64-linux-android
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Build APK
+        shell: bash
+        run: |
+          cd apps/android
+          gradle wrapper --gradle-version 8.10.2
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: qingjian-android-apk
+          path: apps/android/app/build/outputs/apk/debug/app-debug.apk
